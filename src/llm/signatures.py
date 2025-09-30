@@ -17,7 +17,6 @@ class Date(BaseModel):
 
 
 class QueryCategory(Enum):
-    # NEEDS_CLARIFICATION = "NEEDS_CLARIFICATION"
     INFORMATION = "INFORMATION"
     SCHEDULE = "SCHEDULE"
     OTHER = "OTHER"
@@ -37,7 +36,6 @@ class ClassifyQuery(dspy.Signature):
         
         OTHER: The message content does not clearly fit into any of the above defined categories.
     """
-        # NEEDS_CLARIFICATION: The user's message is ambiguous, lacks sufficient detail, or is too broad to provide a specific answer.
 
     user_text: str = dspy.InputField(
         desc="The text contained in the message user had sent"
@@ -47,10 +45,6 @@ class ClassifyQuery(dspy.Signature):
     )
 
     category: QueryCategory = dspy.OutputField()
-    # required_clarifications: Optional[str] = dspy.OutputField(
-    #     desc="The topic items which need clarification."
-    # )
-
 
 class InfoAgent(dspy.Signature):
     """You are an information manager. Your task is to use the tools provided to store and retrieve information as needed
@@ -100,15 +94,9 @@ class ClarifyQuery(dspy.Signature):
 
 
 class GenerateResponse(dspy.Signature):
-    """STRICTLY ONLY Rewrite the given response into a polite and helpful customer support response.
-    The response should be concise and easy to understand.
+    """STRICTLY ONLY Rewrite the given response into a polite and helpful format.
+    The response should be concise, easy to understand and as short as possible.
     The response must be in point by point format if there are multiple points to be addressed.
-
-    If the category is INFORMATION_DUMP, acknowledge that the information has been noted.
-    If the category is SCHEDULING, include the reminder details in the response.
-    If the category is GENERAL_INQUIRY, provide a concise and accurate answer to the user's question by using the proposed answer.
-    If the category is OTHER, politely inform the user that their query is outside the scope of support and suggest
-        alternative resources or contacts for assistance.
     """
 
     user_query: str = dspy.InputField()
@@ -117,7 +105,6 @@ class GenerateResponse(dspy.Signature):
     response: str = dspy.OutputField()
 
 
-# Admin Agent Signatures
 class Analyzer(dspy.Signature):
     """Analyze the given image, text or both and extract main information from it."""
 

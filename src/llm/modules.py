@@ -1,5 +1,4 @@
 import dspy
-import base64
 import logging
 
 from db import DBConn
@@ -13,29 +12,31 @@ from llm.tools import (
 from llm.signatures import (
     Analyzer,
     ClassifyQuery,
-    ClarifyQuery,
     GenerateResponse,
     InfoAgent,
     QueryCategory,
     ScheduleAgent,
 )
 
-
-def convert_image(file: BinaryIO) -> str:
-    return "data:image/png;base64," + base64.b64encode(file.read()).decode("utf-8")
+from src.llm.tools import convert_image
 
 
 class UserSupportAgent(dspy.Module):
     def __init__(self, db: DBConn):
         super().__init__()
-        self.q_classifier = dspy.ChainOfThought(ClassifyQuery)
-        self.q_clarifier = dspy.Predict(ClarifyQuery)
+        self.q_classifier = dspy.Predict(ClassifyQuery)
         self.schedule_agent = dspy.ReAct(
             ScheduleAgent, tools=[db.insert_reminder, db.get_pending_reminders]
         )  # noqa: F82
         self.analyzer = dspy.Predict(Analyzer)
         self.info_agent = dspy.ReAct(
-            InfoAgent, tools=[retrieve_relevant_info, retrieve_relevant_messages, db.get_pending_reminders]
+            InfoAgent,
+            tools=[
+                retrieve_relevant_info,
+                retrieve_relevant_messages,
+                db.get_pending_reminders,
+                db.get_message_by_id,
+            ],
         )
         self.answer_rephraser = dspy.Predict(GenerateResponse)
 
@@ -50,7 +51,7 @@ class UserSupportAgent(dspy.Module):
         logging.info(f"Query: {query}")
 
         imgs = (
-            [dspy.Image.from_file(convert_image(img)) for img in images]
+            [convert_image(img.read()) for img in images]
             if images
             else None
         )
@@ -71,16 +72,6 @@ class UserSupportAgent(dspy.Module):
         )
 
         match classification.category:
-            # case QueryCategory.NEEDS_CLARIFICATION:
-            #     logging.info(
-            #         f"Needs clarification: {classification.required_clarifications}"
-            #     )
-            #     c_query = self.q_clarifier(
-            #         unclear_query=query,
-            #         required_clarifications=classification.required_clarifications,
-            #     )
-            #     proposed_ans = c_query.clarifying_question
-
             case QueryCategory.INFORMATION:
                 info = self.info_agent(
                     context_txt=query, context_img=imgs, user_id=user_id
@@ -125,12 +116,3 @@ class UserSupportAgent(dspy.Module):
             content=query, user_id=user_id, is_llm=True, msg_id=msg_id
         )
         return final_ans
-
-
-class AdminSupportAgent(dspy.Module):
-    def __init__(self):
-        super().__init__()
-        self.analyzer = dspy.Predict(Analyzer)
-
-    def forward(self, context_txt: Optional[str], context_img):
-        analysis = self.analyzer(context_img=context_img, context_txt=context_txt)

@@ -3,6 +3,9 @@ import pickle
 from typing import BinaryIO, Optional
 from datetime import datetime
 
+import dspy
+from llm.tools import convert_image
+
 
 class DBConn:
     def __init__(self) -> None:
@@ -70,6 +73,23 @@ class DBConn:
         msg_id = cur.fetchone()
         self.db.commit()
         return msg_id[0]
+
+    def get_message_by_id(self, message_id: int) -> tuple[Optional[str], Optional[list[dspy.Image]]]:
+        """Fetch message content and images by message_id.
+        
+        Returns:
+            (content: str | None, images: [dspy.Image] | None).
+        """
+        sql = """SELECT content, imgs FROM messages WHERE message_id = ?"""
+        cur = self.db.cursor()
+        cur.execute(sql, (message_id,))
+        row = cur.fetchone()
+
+        if row[1]:
+            images = [convert_image(img) for img in pickle.loads(row[1])]
+            return (row[0], images)
+        
+        return row
 
     def insert_reminder(
         self, user_id: str, content: str, remind_at: datetime, msg_id: int
