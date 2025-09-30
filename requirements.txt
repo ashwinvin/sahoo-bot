@@ -1,5 +1,6 @@
 aiogram
 aiohttp
-dspy
+dspy-ai 
 google-genai
 python-dotenv
+chromadb-client
