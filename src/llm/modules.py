@@ -42,7 +42,7 @@ class UserSupportAgent(dspy.Module):
 
         self.db = db
 
-    def forward(
+    async def aforward(
         self,
         query: str,
         images: Optional[list[BinaryIO]],
@@ -56,7 +56,7 @@ class UserSupportAgent(dspy.Module):
             else None
         )
 
-        classification = self.q_classifier(
+        classification = await self.q_classifier.acall(
             user_text=query,
             user_images=imgs,
         )
@@ -65,22 +65,22 @@ class UserSupportAgent(dspy.Module):
 
         msg_id = self.db.insert_message("user", query, images)  # type: ignore
         if not query:
-            query = self.analyzer(context_img=imgs).summary
+            query = (await self.analyzer.acall(context_img=imgs)).summary
 
-        insert_message_embedding(
+        await insert_message_embedding(
             content=query, user_id=user_id, is_llm=False, msg_id=msg_id
         )
 
         match classification.category:
             case QueryCategory.INFORMATION:
-                info = self.info_agent(
+                info = await self.info_agent.acall(
                     context_txt=query, context_img=imgs, user_id=user_id
                 )
                 proposed_ans = info.response
 
                 if info.is_data_dump:
                     info_id = self.db.insert_info(proposed_ans, msg_id, user_id)
-                    insert_info_embedding(
+                    await insert_info_embedding(
                         summary=proposed_ans,
                         user_id=user_id,
                         info_id=info_id,
@@ -89,30 +89,32 @@ class UserSupportAgent(dspy.Module):
                     logging.info(f"Information Processed: {proposed_ans}")
 
                 if info.has_event_data:
-                    proposed_ans += self.schedule_agent(
+                    scheduled_pred = await self.schedule_agent.acall(
                         user_id=user_id,
                         content_txt=query,
                         content_img=imgs,
-                    ).response
+                    )
+                    proposed_ans += scheduled_pred.response
 
             case QueryCategory.SCHEDULE:
-                proposed_ans = self.schedule_agent(
-                    user_id=user_id,
-                    content_txt=query,
-                    content_img=imgs,
-                ).response
+                scheduled_pred = await self.schedule_agent.acall(
+                        user_id=user_id,
+                        content_txt=query,
+                        content_img=imgs,
+                    )
+                proposed_ans = scheduled_pred.response
 
             case _:
                 proposed_ans = "I'm sorry, but I couldn't understand your request."
 
-        final_ans = self.answer_rephraser(
+        final_ans = await self.answer_rephraser.acall(
             user_query=query,
             proposed_answer=proposed_ans,
             category=classification.category,
         )
 
         self.db.insert_message("llm", final_ans.response)  # type: ignore
-        insert_message_embedding(
+        await insert_message_embedding(
             content=query, user_id=user_id, is_llm=True, msg_id=msg_id
         )
         return final_ans

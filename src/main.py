@@ -14,6 +14,7 @@ from google.genai import types, Client
 
 from db import DBConn
 from llm.modules import UserSupportAgent
+from src.llm.tools import ChromaSingleton
 
 
 load_dotenv(".env")
@@ -59,8 +60,9 @@ async def customer_handler(
         await message.answer("Unsupported message format.")
         return
 
-    answer = user_agent(
-        query=query, images=images, user_id=message.chat.username)
+    answer = await user_agent.acall(
+        query=query, images=images, user_id=message.chat.username
+    )
     await message.answer(answer.response)
 
 
@@ -85,8 +87,10 @@ async def cron_manager(bot: Bot):
 async def main() -> None:
     bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))  # type: ignore
     g_client = Client(api_key=getenv("GEMINI_KEY"))
-    
     user_agent = UserSupportAgent(db=db_con)
+    cs = await ChromaSingleton()
+    await cs.setup()
+
 
     asyncio.create_task(cron_manager(bot), name="CronManager")
     await dp.start_polling(bot, g_client=g_client, user_agent=user_agent)
