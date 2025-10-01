@@ -17,7 +17,7 @@ class ChromaSingleton:
         return cls.instance
 
     async def setup(self):
-        try: # Just initialise collections on a fresh instance
+        try:  # Just initialise collections on a fresh instance
             await self.client.get_or_create_collection(
                 name="bot-infostore", configuration={"hnsw": {"space": "cosine"}}
             )
@@ -27,7 +27,10 @@ class ChromaSingleton:
         except Exception as e:
             logging.exception(f"Error setting up Chroma collections: {e}")
 
-async def insert_info_embedding(summary: str, user_id: str, info_id: int, msg_id: int):
+
+async def insert_info_embedding(
+    summary: str, user_id: str, info_id: int, msg_id: int, has_img: bool
+):
     c_singleton = await ChromaSingleton()
     collection = await c_singleton.client.get_collection(name="bot-infostore")
     logging.info(f"Inserting embedding for info_id: {info_id}")
@@ -35,7 +38,14 @@ async def insert_info_embedding(summary: str, user_id: str, info_id: int, msg_id
     await collection.add(
         ids=[str(info_id)],
         documents=[summary],
-        metadatas=[{"user_id": user_id, "info_id": info_id, "msg_id": msg_id}],
+        metadatas=[
+            {
+                "user_id": user_id,
+                "info_id": info_id,
+                "msg_id": msg_id,
+                "has_img": has_img,
+            }
+        ],
     )
 
 
@@ -56,7 +66,7 @@ async def insert_message_embedding(
 async def retrieve_relevant_info(query: str, user_id: str):
     """Retrieve relevant information for a given query and user.
     Returns:
-        [(Id, Distance, Document)]: The id points to the source of the information stored in the database
+        [(msg_id, Distance, Document)]: The id points to the source of the information stored in the database
             and Document is the summary of the information.
     """
     c_singleton = await ChromaSingleton()
@@ -74,17 +84,16 @@ async def retrieve_relevant_info(query: str, user_id: str):
 
     data = sorted(
         [
-            (_id, dist, res)
-            for _id, dist, res in zip(
-                results["ids"][0],
+            (meta["msg_id"], dist, res)
+            for meta, dist, res in zip(
+                results["metadatas"][0],  # type: ignore
                 results["distances"][0],  # type: ignore
                 results["documents"][0],  # type: ignore
             )
         ],
         key=lambda x: x[1],
-        reverse=True,
     )
-    logging.info("Retrieved data: %s", data)  # noqa: F821
+    logging.info("Retrieved data from msg_ids: %s", [m_id[0] for m_id in data])  # noqa: F821
 
     return data
 

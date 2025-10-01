@@ -31,9 +31,9 @@ class ClassifyQuery(dspy.Signature):
             is also considered as INFORMATION. The user may also be asking about schedule details of an event, in which case
             the category is still INFORMATION.
 
-        SCHEDULE: The user is requesting to be reminded about a specific matter or attempting to set up an event. 
+        SCHEDULE: The user is requesting to be reminded about a specific matter or attempting to set up an event.
             Examples: "When is the meeting?", "Remind me to call John at 3 PM," "Schedule a dinner for next Tuesday."
-        
+
         OTHER: The message content does not clearly fit into any of the above defined categories.
     """
 
@@ -46,15 +46,20 @@ class ClassifyQuery(dspy.Signature):
 
     category: QueryCategory = dspy.OutputField()
 
+
 class InfoAgent(dspy.Signature):
     """You are an information manager. Your task is to use the tools provided to store and retrieve information as needed
-    after a thorough analysis of the user's input. 
-    
-    - If the user provides new information, summarize it concisely and return while setting the 'response' field to the 
-      summary and 'is_data_dump' to True.
-    - If the user provided information that has details regarding an event, extract the event details and set 
-      'has_event_data' to True.
+    after a thorough analysis of the user's input.
+
+    - If the user provides new information, summarize it concisely and return while setting the 'response' field to the
+      summary and 'is_data_dump' to True and if it also has details regarding an event, extract the event details and set
+      'set_event_reminder' as a prompt to another agent.
+
+    - If a users wants to know about their schedule or an event that is bound to happen, use the tools to fetch the schedule
+        and information about the event.
+
     - If the user asks a question or requests information, retrieve relevant information using the tools provided.
+        Make sure to Populate the 'source_documents' field with the msg_ids of the relevant documents.
     """
 
     context_txt: Optional[str] = dspy.InputField()
@@ -62,8 +67,12 @@ class InfoAgent(dspy.Signature):
     user_id: str = dspy.InputField()
 
     response: Optional[str] = dspy.OutputField()
-    has_event_data: bool = dspy.OutputField()
+    set_event_reminder: str = dspy.OutputField()
     is_data_dump: bool = dspy.OutputField()
+    source_documents: Optional[list[str]] = dspy.OutputField(
+        desc="The msg_ids of the messages you used as source."
+    )
+
 
 class ScheduleAgent(dspy.Signature):
     """You are a scheduling assistant. Your task is to use the tools provided to manage and schedule events based on user requests."""
@@ -97,6 +106,7 @@ class GenerateResponse(dspy.Signature):
     """STRICTLY ONLY Rewrite the given response into a polite and helpful format.
     The response should be concise, easy to understand and as short as possible.
     The response must be in point by point format if there are multiple points to be addressed.
+    If the proposed answer is answer to a question, make sure to indicate the sources.
     """
 
     user_query: str = dspy.InputField()

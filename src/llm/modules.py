@@ -19,6 +19,7 @@ from llm.signatures import (
 )
 
 from src.llm.tools import convert_image
+from src import QueryStatusManager
 
 
 class UserSupportAgent(dspy.Module):
@@ -47,14 +48,9 @@ class UserSupportAgent(dspy.Module):
         query: str,
         images: Optional[list[BinaryIO]],
         user_id: str,
+        status_manager: QueryStatusManager,
     ):
-        logging.info(f"Query: {query}")
-
-        imgs = (
-            [convert_image(img.read()) for img in images]
-            if images
-            else None
-        )
+        imgs = [convert_image(img.read()) for img in images] if images else None
 
         classification = await self.q_classifier.acall(
             user_text=query,
@@ -73,6 +69,10 @@ class UserSupportAgent(dspy.Module):
 
         match classification.category:
             case QueryCategory.INFORMATION:
+                await status_manager.update_message(
+                    "Analyzing and retrieving relevent information..."
+                )
+
                 info = await self.info_agent.acall(
                     context_txt=query, context_img=imgs, user_id=user_id
                 )
@@ -85,23 +85,38 @@ class UserSupportAgent(dspy.Module):
                         user_id=user_id,
                         info_id=info_id,
                         msg_id=msg_id,
+                        has_img=True if imgs else False,
                     )
-                    logging.info(f"Information Processed: {proposed_ans}")
+                    await status_manager.update_message(
+                        f"I've extracted the following data and updated my database. \n {proposed_ans}"
+                    )
 
-                if info.has_event_data:
-                    scheduled_pred = await self.schedule_agent.acall(
-                        user_id=user_id,
-                        content_txt=query,
-                        content_img=imgs,
+                    if event_prompt := info.set_event_reminder:
+                        scheduled_pred = await self.schedule_agent.acall(
+                            user_id=user_id,
+                            content_txt=event_prompt,
+                            content_img=imgs,
+                        )
+                        proposed_ans += scheduled_pred.response
+
+                if info.source_documents:
+                    await status_manager.update_message(
+                        f"Information sourced from message ids: {info.source_documents}"
                     )
-                    proposed_ans += scheduled_pred.response
+                    sources = "\n".join(
+                        [
+                            f"- {self.db.get_message_by_id(msg_id)}"
+                            for msg_id in info.source_documents
+                        ]
+                    )
+                    proposed_ans += f"\n\nThe information I used is sourced from the following messages:\n{sources}"
 
             case QueryCategory.SCHEDULE:
                 scheduled_pred = await self.schedule_agent.acall(
-                        user_id=user_id,
-                        content_txt=query,
-                        content_img=imgs,
-                    )
+                    user_id=user_id,
+                    content_txt=query,
+                    content_img=imgs,
+                )
                 proposed_ans = scheduled_pred.response
 
             case _:

@@ -14,6 +14,7 @@ from google.genai import types, Client
 
 from db import DBConn
 from llm.modules import UserSupportAgent
+from src import QueryStatusManager
 from src.llm.tools import ChromaSingleton
 
 
@@ -27,11 +28,14 @@ dp = Dispatcher()
 db_con = DBConn()
 
 
-@dp.message(F.chat.username == ADMIN)
+@dp.message()
 async def customer_handler(
     message: Message, bot: Bot, g_client: Client, user_agent: UserSupportAgent
 ) -> None:
     await message.chat.do(action="typing")
+    status_msg = await message.reply("Analysing your query...")
+    status_manager = QueryStatusManager(status_msg)
+
     db_con.insert_user(message.chat.username)  # type: ignore
     images = query = None
 
@@ -59,10 +63,13 @@ async def customer_handler(
     if not query and not images:
         await message.answer("Unsupported message format.")
         return
-
     answer = await user_agent.acall(
-        query=query, images=images, user_id=message.chat.username
+        query=query,
+        images=images,
+        user_id=message.chat.id,
+        status_manager=status_manager,
     )
+    await status_manager.close()
     await message.answer(answer.response)
 
 
@@ -90,7 +97,6 @@ async def main() -> None:
     user_agent = UserSupportAgent(db=db_con)
     cs = await ChromaSingleton()
     await cs.setup()
-
 
     asyncio.create_task(cron_manager(bot), name="CronManager")
     await dp.start_polling(bot, g_client=g_client, user_agent=user_agent)

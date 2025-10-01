@@ -4,7 +4,7 @@ from typing import BinaryIO, Optional
 from datetime import datetime
 
 import dspy
-from llm.tools import convert_image
+from src.llm.tools import convert_image
 
 
 class DBConn:
@@ -20,7 +20,6 @@ class DBConn:
                         notion_id TEXT NOT NULL,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );""")
-
 
         cur.execute("""CREATE TABLE IF NOT EXISTS messages (
                     message_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,9 +73,11 @@ class DBConn:
         self.db.commit()
         return msg_id[0]
 
-    def get_message_by_id(self, message_id: int) -> tuple[Optional[str], Optional[list[dspy.Image]]]:
+    def get_message_by_id(
+        self, message_id: int
+    ) -> tuple[Optional[str], Optional[list[dspy.Image]]]:
         """Fetch message content and images by message_id.
-        
+
         Returns:
             (content: str | None, images: [dspy.Image] | None).
         """
@@ -88,7 +89,7 @@ class DBConn:
         if row[1]:
             images = [convert_image(img) for img in pickle.loads(row[1])]
             return (row[0], images)
-        
+
         return row
 
     def insert_reminder(
@@ -117,18 +118,15 @@ class DBConn:
         cur = self.db.cursor()
         cur.execute(sql, (user_id,))
         return cur.fetchall()
-    
+
     def update_reminder_status(self, reminder_id: int, status: str):
         sql = """UPDATE reminders SET status = ? WHERE reminder_id = ?"""
         cur = self.db.cursor()
         cur.execute(sql, (status, reminder_id))
         self.db.commit()
 
-
     def insert_info(self, content: str, msg_id: int, user_id: str) -> int:
-        sql = (
-            """INSERT INTO information(content, message_id, user_id) VALUES(?, ?, ?) RETURNING info_id"""
-        )
+        sql = """INSERT INTO information(content, message_id, user_id) VALUES(?, ?, ?) RETURNING info_id"""
         cur = self.db.cursor()
         cur.execute(sql, (content, msg_id, user_id))
         info_id = cur.fetchone()[0]
