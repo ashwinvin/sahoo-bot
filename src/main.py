@@ -1,13 +1,15 @@
 import sys
 import asyncio
 import logging
+from io import BytesIO
 from os import getenv
 from datetime import datetime
 from dotenv import load_dotenv
 
+from pdf2image import convert_from_bytes
 from aiogram.types import Message
 from aiogram.enums import ParseMode
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 
 from google.genai import types, Client
@@ -44,9 +46,36 @@ async def customer_handler(
 
     if message.text:
         query = message.text
+    elif doc_meta := message.document:
+        await status_manager.update_message(f"Downloading {doc_meta.file_name}")
+        document = await bot.download(doc_meta)
+
+        assert document is not None
+        assert doc_meta.file_name is not None
+
+        if doc_meta.mime_type == "application/pdf":
+            await status_manager.update_message("Preprocessing pdf document...")
+            pages = convert_from_bytes(document.read())
+            images = []
+
+            for page in pages:
+                img_byte_arr = BytesIO()
+                page.save(img_byte_arr, format="PNG")
+                img_byte_arr.seek(0)
+                images.append(img_byte_arr)
+
+            query = "The user has sent a PDF document. Please analyze the images extracted from the PDF."
+
+        elif doc_meta.mime_type == "application/binary" and doc_meta.file_name.endswith(
+            ".md"
+        ):
+            query = f"The user has a markdown file with following content: \n {document.read()}."
+
     elif m_voice := message.voice:
+        await status_manager.update_message("Transcribing voice message...")
         voice = await bot.download(m_voice)
         assert voice is not None
+
         query = g_client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[
@@ -63,6 +92,7 @@ async def customer_handler(
     if not query and not images:
         await message.answer("Unsupported message format.")
         return
+
     answer = await user_agent.acall(
         query=query,
         images=images,

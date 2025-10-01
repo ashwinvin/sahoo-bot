@@ -4,3 +4,6 @@ dspy-ai
 google-genai
 python-dotenv
 chromadb-client
+mcp
+pdf2image
+markdown-pdf
