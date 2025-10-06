@@ -38,16 +38,23 @@ async def customer_handler(
     status_msg = await message.reply("Analysing your query...")
     status_manager = QueryStatusManager(status_msg)
 
-    db_con.insert_user(message.chat.username)  # type: ignore
-    images = query = None
+    db_con.insert_user(message.chat.id)  # type: ignore
+    images = query = file_id = None
+    is_doc = False
 
     if images := message.photo:
-        images = [await bot.download(photo) for photo in images]
+        await status_manager.update_message("Downloading images...")
+        file_id = images[0].file_id
+        images = [await bot.download(photo) for photo in images]  # TODO: BLUNDER!!
 
     if message.text:
         query = message.text
+
     elif doc_meta := message.document:
+        is_doc = True
         await status_manager.update_message(f"Downloading {doc_meta.file_name}")
+        logging.info(f"Document mime type: {doc_meta}")
+        file_id = doc_meta.file_id
         document = await bot.download(doc_meta)
 
         assert document is not None
@@ -71,8 +78,9 @@ async def customer_handler(
         ):
             query = f"The user has a markdown file with following content: \n {document.read()}."
 
-    elif m_voice := message.voice:
+    elif m_voice := (message.voice or message.audio):
         await status_manager.update_message("Transcribing voice message...")
+        file_id = m_voice.file_id
         voice = await bot.download(m_voice)
         assert voice is not None
 
@@ -93,14 +101,29 @@ async def customer_handler(
         await message.answer("Unsupported message format.")
         return
 
+    msg_id = db_con.insert_message("user", query, images, file_id, is_doc)  # type: ignore
     answer = await user_agent.acall(
         query=query,
         images=images,
         user_id=message.chat.id,
         status_manager=status_manager,
+        msg_id=msg_id,
     )
+
+    if answer.document_ids_o and answer.is_hard_retrieval_o:
+        for doc_id in answer.document_ids_o:
+            (txt, _, file_id, is_doc) = db_con.get_message_by_id(doc_id)
+            if file_id and is_doc:
+                await message.reply_document(file_id, caption=txt)  
+            elif file_id:
+                await message.reply_photo(file_id, caption=txt)  
+            else:
+                await message.reply(txt) # type: ignore  
+        return
+    else:
+        await message.answer(answer.response)
+    
     await status_manager.close()
-    await message.answer(answer.response)
 
 
 async def cron_manager(bot: Bot):
@@ -125,6 +148,7 @@ async def main() -> None:
     bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))  # type: ignore
     g_client = Client(api_key=getenv("GEMINI_KEY"))
     user_agent = UserSupportAgent(db=db_con)
+
     cs = await ChromaSingleton()
     await cs.setup()
 

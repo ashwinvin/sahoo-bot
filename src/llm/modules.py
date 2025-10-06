@@ -47,9 +47,12 @@ class UserSupportAgent(dspy.Module):
         self,
         query: str,
         images: Optional[list[BinaryIO]],
-        user_id: str,
+        user_id: int,
         status_manager: QueryStatusManager,
+        msg_id: int
     ):
+        [img.seek(0) for img in images] if images else None
+
         imgs = [convert_image(img.read()) for img in images] if images else None
 
         classification = await self.q_classifier.acall(
@@ -59,14 +62,14 @@ class UserSupportAgent(dspy.Module):
 
         logging.info(f"CAT:{classification.category}")
 
-        msg_id = self.db.insert_message("user", query, images)  # type: ignore
         if not query:
             query = (await self.analyzer.acall(context_img=imgs)).summary
 
         await insert_message_embedding(
             content=query, user_id=user_id, is_llm=False, msg_id=msg_id
         )
-
+        is_hard_retrieval = False
+        doc_ids = []
         match classification.category:
             case QueryCategory.INFORMATION:
                 await status_manager.update_message(
@@ -79,7 +82,7 @@ class UserSupportAgent(dspy.Module):
                 proposed_ans = info.response
 
                 if info.is_data_dump:
-                    info_id = self.db.insert_info(proposed_ans, msg_id, user_id)
+                    info_id = self.db.insert_info(proposed_ans, msg_id, str(user_id))
                     await insert_info_embedding(
                         summary=proposed_ans,
                         user_id=user_id,
@@ -110,6 +113,13 @@ class UserSupportAgent(dspy.Module):
                         ]
                     )
                     proposed_ans += f"\n\nThe information I used is sourced from the following messages:\n{sources}"
+                    doc_ids = info.source_documents
+
+                if info.is_hard_retrieval:
+                    await status_manager.update_message(
+                        f"Document found from message ids: {info.source_documents}"
+                    )
+                    is_hard_retrieval = True
 
             case QueryCategory.SCHEDULE:
                 scheduled_pred = await self.schedule_agent.acall(
@@ -126,6 +136,8 @@ class UserSupportAgent(dspy.Module):
             user_query=query,
             proposed_answer=proposed_ans,
             category=classification.category,
+            is_hard_retrieval=is_hard_retrieval,
+            document_ids=doc_ids
         )
 
         self.db.insert_message("llm", final_ans.response)  # type: ignore

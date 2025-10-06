@@ -1,6 +1,5 @@
 from aiogram.types import Message
 
-
 class QueryStatusManager:
     def __init__(self, msg: Message) -> None:
         self.msg: Message = msg

@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 import pickle
 from typing import BinaryIO, Optional
@@ -26,6 +27,8 @@ class DBConn:
                     sender TEXT NOT NULL, -- 'user' or 'llm'
                     content TEXT,
                     imgs BLOB, -- pickle fmt
+                    file_id TEXT,
+                    is_document BOOLEAN DEFAULT 0,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
                     """)
 
@@ -63,32 +66,37 @@ class DBConn:
         sender: str,
         content: Optional[str] = None,
         imgs: Optional[list[BinaryIO]] = None,
+        file_id: Optional[str] = None,
     ) -> int:
         # Sender - "llm" or "user"
         serialized_imgs = pickle.dumps([img.read() for img in imgs]) if imgs else None
-        sql = """INSERT INTO messages(sender, content, imgs) VALUES(?, ?, ?) RETURNING message_id"""
+        sql = """INSERT INTO messages(sender, content, imgs, file_id) VALUES(?, ?, ?, ?) RETURNING message_id"""
         cur = self.db.cursor()
-        cur.execute(sql, (sender, content, serialized_imgs))
+        cur.execute(sql, (sender, content, serialized_imgs, file_id))
         msg_id = cur.fetchone()
         self.db.commit()
         return msg_id[0]
 
     def get_message_by_id(
         self, message_id: int
-    ) -> tuple[Optional[str], Optional[list[dspy.Image]]]:
+    ) -> tuple[Optional[str], Optional[list[dspy.Image]], Optional[str], bool]:
         """Fetch message content and images by message_id.
 
         Returns:
-            (content: str | None, images: [dspy.Image] | None).
+            (content: str | None, images: [dspy.Image] | None, file_id: str | None, is_document: bool).
         """
-        sql = """SELECT content, imgs FROM messages WHERE message_id = ?"""
+        sql = """SELECT content, imgs, file_id, is_document FROM messages WHERE message_id = ?"""
         cur = self.db.cursor()
         cur.execute(sql, (message_id,))
         row = cur.fetchone()
 
+        if not row:
+            logging.warning(f"No message found with id: {message_id}")
+            return (None, None, None, False)
+        
         if row[1]:
             images = [convert_image(img) for img in pickle.loads(row[1])]
-            return (row[0], images)
+            return (row[0], images, row[2], row[3])
 
         return row
 

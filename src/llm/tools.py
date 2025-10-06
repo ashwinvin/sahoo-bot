@@ -4,8 +4,6 @@ from chromadb import AsyncHttpClient as ChromaClient
 from chromadb.api import AsyncClientAPI
 import dspy
 
-chroma_client = ChromaClient()
-
 
 class ChromaSingleton:
     client: AsyncClientAPI
@@ -29,7 +27,7 @@ class ChromaSingleton:
 
 
 async def insert_info_embedding(
-    summary: str, user_id: str, info_id: int, msg_id: int, has_img: bool
+    summary: str, user_id: int, info_id: int, msg_id: int, has_img: bool
 ):
     c_singleton = await ChromaSingleton()
     collection = await c_singleton.client.get_collection(name="bot-infostore")
@@ -50,7 +48,7 @@ async def insert_info_embedding(
 
 
 async def insert_message_embedding(
-    content: str, user_id: str, is_llm: bool, msg_id: int
+    content: str, user_id: int, is_llm: bool, msg_id: int
 ):
     c_singleton = await ChromaSingleton()
     collection = await c_singleton.client.get_collection(name="bot-msgstore")
@@ -63,7 +61,7 @@ async def insert_message_embedding(
     )
 
 
-async def retrieve_relevant_info(query: str, user_id: str):
+async def retrieve_relevant_info(query: str, user_id: int):
     """Retrieve relevant information for a given query and user.
     Returns:
         [(msg_id, Distance, Document)]: The id points to the source of the information stored in the database
