@@ -1,5 +1,6 @@
 import base64
 import logging
+from os import getenv
 from chromadb import AsyncHttpClient as ChromaClient
 from chromadb.api import AsyncClientAPI
 import dspy
@@ -11,7 +12,19 @@ class ChromaSingleton:
     async def __new__(cls):
         if not hasattr(cls, "instance"):
             cls.instance = super(ChromaSingleton, cls).__new__(cls)
-            cls.instance.client = await ChromaClient()
+            ssl = False
+            headers = {}
+            if getenv("CHROMA_KEY"):
+                headers = {"x-chroma-token": getenv("CHROMA_KEY")}
+                ssl = True
+            cls.instance.client = await ChromaClient(
+                host=getenv("CHROMA_HOST"),  # type: ignore
+                port=int(getenv("CHROMA_PORT")),  # type: ignore
+                tenant=getenv("CHROMA_TENANT"),  # type: ignore
+                headers=headers,  # type: ignore
+                ssl=ssl,
+                database=getenv("CHROMA_DB"),  # type: ignore
+            )
         return cls.instance
 
     async def setup(self):
