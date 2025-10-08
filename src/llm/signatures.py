@@ -69,6 +69,7 @@ class InfoAgent(dspy.Signature):
     context_txt: Optional[str] = dspy.InputField()
     context_img: Optional[list[dspy.Image]] = dspy.InputField()
     user_id: str = dspy.InputField()
+    history: dspy.History = dspy.InputField()
 
     response: Optional[str] = dspy.OutputField()
     set_event_reminder: str = dspy.OutputField()
@@ -79,6 +80,7 @@ class InfoAgent(dspy.Signature):
     is_hard_retrieval: bool = dspy.OutputField(
         desc="Set this to True if the user is explicitly asking to retrieve a document."
     )
+
 
 class NotionAgent(dspy.Signature):
     """You are a Notion assistant. Your task is to use the tools provided to create and manage Notion pages based on user requests."""
@@ -110,7 +112,7 @@ class GenerateResponse(dspy.Signature):
     The response must be in point by point format if there are multiple points to be addressed.
     If the proposed answer is answer to a question, make sure to indicate the sources.
 
-    If is_hard_retrieval is True, do not attempt to answer the question, just inform the user that the document has 
+    If is_hard_retrieval is True, do not attempt to answer the question, just inform the user that the document has
     been found and will be provided. Set the document_ids in the response from the proposed answer
     """
 

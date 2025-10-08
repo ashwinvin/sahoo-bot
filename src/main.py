@@ -1,23 +1,26 @@
 import sys
+import typing
 import asyncio
 import logging
-from io import BytesIO
 from os import getenv
+from io import BytesIO
 from datetime import datetime
+from aiogram.types.message import Message
 from dotenv import load_dotenv
 
 from pdf2image import convert_from_bytes
-from aiogram.types import Message
+from aiogram.types import Document
+from aiogram.handlers import MessageHandler
 from aiogram.enums import ParseMode
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 
 from google.genai import types, Client
 
-from db import DBConn
+from db import DBConn, DocType
 from llm.modules import UserSupportAgent
-from src import QueryStatusManager
-from src.llm.tools import ChromaSingleton
+from src import MediaGroupQueue, QueryStatusManager
+from src.llm.tools import EmbeddingStore
 
 
 load_dotenv(".env")
@@ -31,37 +34,28 @@ db_con = DBConn()
 
 
 @dp.message()
-async def customer_handler(
-    message: Message, bot: Bot, g_client: Client, user_agent: UserSupportAgent
-) -> None:
-    await message.chat.do(action="typing")
-    status_msg = await message.reply("Analysing your query...")
-    status_manager = QueryStatusManager(status_msg)
+class UserHandler(MessageHandler):
+    def __init__(self, event: Message, **kwargs: typing.Any) -> None:
+        self.chat_history = {}
+        super().__init__(event, **kwargs)
 
-    db_con.insert_user(message.chat.id)  # type: ignore
-    images = query = file_id = None
-    is_doc = False
+    def __getattr__(self, name: str) -> typing.Any:
+        if item := self.data.get(name):
+            return item
+        else:
+            raise AttributeError(f"{name} not found self.data")
 
-    if images := message.photo:
-        await status_manager.update_message("Downloading images...")
-        file_id = images[0].file_id
-        images = [await bot.download(photo) for photo in images]  # TODO: BLUNDER!!
-
-    if message.text:
-        query = message.text
-
-    elif doc_meta := message.document:
-        is_doc = True
-        await status_manager.update_message(f"Downloading {doc_meta.file_name}")
-        logging.info(f"Document mime type: {doc_meta}")
+    async def parse_document(self, doc_meta: Document):
         file_id = doc_meta.file_id
-        document = await bot.download(doc_meta)
+        document = await self.bot.download(doc_meta)
+        images = []
 
         assert document is not None
         assert doc_meta.file_name is not None
+        assert doc_meta.mime_type is not None
 
         if doc_meta.mime_type == "application/pdf":
-            await status_manager.update_message("Preprocessing pdf document...")
+            # await status_manager.update_message("Preprocessing pdf document...")
             pages = convert_from_bytes(document.read())
             images = []
 
@@ -78,13 +72,20 @@ async def customer_handler(
         ):
             query = f"The user has a markdown file with following content: \n {document.read()}."
 
-    elif m_voice := (message.voice or message.audio):
-        await status_manager.update_message("Transcribing voice message...")
+        elif doc_meta.mime_type.startswith("image"):
+            query = f"The user has sent an image file named {doc_meta.file_name}. Please analyze the image."
+            images = [document]
+        else:
+            query = f"The given mime type is not supported. {doc_meta.mime_type}"
+
+        return query, images, file_id
+
+    async def parse_voice(self, m_voice):
         file_id = m_voice.file_id
-        voice = await bot.download(m_voice)
+        voice = await self.bot.download(m_voice)
         assert voice is not None
 
-        query = g_client.models.generate_content(
+        query = self.g_client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[
                 "Generate a transcript of the speech in the language it was spoken in."
@@ -96,39 +97,121 @@ async def customer_handler(
             ],
         ).text
         logging.info(f"Transcription: {query}")
+        return query, file_id
 
-    if not query and not images:
-        await message.answer("Unsupported message format.")
-        return
+    async def handle(self) -> typing.Any:
+        await self.chat.do(action="typing")
+        grouped_msg = False
 
-    msg_id = db_con.insert_message("user", query, images, file_id, is_doc)  # type: ignore
-    answer = await user_agent.acall(
-        query=query,
-        images=images,
-        user_id=message.chat.id,
-        status_manager=status_manager,
-        msg_id=msg_id,
-    )
+        status_msg = await self.event.reply("Analysing your query...")
+        status_manager = QueryStatusManager(status_msg)
+        db_con.insert_user(self.chat.id)  # type: ignore
+        images = query = file_id = None
+        doc_type = None
 
-    if answer.document_ids_o and answer.is_hard_retrieval_o:
-        for doc_id in answer.document_ids_o:
-            (txt, _, file_id, is_doc) = db_con.get_message_by_id(doc_id)
-            if file_id and is_doc:
-                await message.reply_document(file_id, caption=txt)  
-            elif file_id:
-                await message.reply_photo(file_id, caption=txt)  
-            else:
-                await message.reply(txt) # type: ignore  
-        return
-    else:
-        await message.answer(answer.response)
-    
-    await status_manager.close()
+        if images := self.event.photo:
+            grouped_msg = await self.media_group_queue.add(
+                self.event.media_group_id, self.event.chat.id
+            )
+            status_manager = await status_manager.set_media_grouped(
+                self.event.media_group_id  # type: ignore
+            )
+
+            doc_type = DocType.PHOTO
+            file_id = images[0].file_id
+            images = [await self.bot.download(images[-1])]
+
+            if (
+                not grouped_msg
+            ):  # Wait for any other images which might be send together
+                await status_manager.update_message(
+                    "Waiting for any other image that might be in the album."
+                )
+                while True:
+                    try:
+                        async with asyncio.timeout(5):
+                            logging.info(
+                                f"MG ID: {self.event.media_group_id} recieved a new photo"
+                            )
+                            images.append(
+                                await self.media_group_queue.work_queue[
+                                    self.event.media_group_id
+                                ].get()
+                            )
+                    except asyncio.TimeoutError:
+                        logging.info(
+                            f"MG ID: {self.event.media_group_id} recieved {len(images)} photos"
+                        )
+                        await status_manager.update_message(
+                            f"Downloaded {len(images)} from the album"
+                        )
+                        break
+
+            if grouped_msg:
+                await self.media_group_queue.submit_task(
+                    self.event.media_group_id, images[0]
+                )
+                return
+
+        if self.event.text:
+            query = self.event.text
+
+        elif doc_meta := self.event.document:
+            doc_type = DocType.DOCUMENT
+            await status_manager.update_message(f"Downloading {doc_meta.file_name}")
+            logging.info(f"Document mime type: {doc_meta}")
+            query, images, file_id = await self.parse_document(doc_meta)
+
+        elif m_voice := (self.event.voice or self.event.audio):
+            doc_type = DocType.VOICE
+            await status_manager.update_message("Transcribing voice message...")
+            query, file_id = await self.parse_voice(m_voice)
+
+        if not query and not images:
+            await self.event.answer("Unsupported message format.")
+            return
+
+        msg_id = db_con.insert_message("user", query, images, file_id, doc_type)  # type: ignore
+
+        reply_context = (
+            db_con.get_message_by_id(self.event.reply_to_message.message_id)
+            if self.event.reply_to_message
+            else None
+        )
+
+        answer = await self.user_agent.acall(
+            query=query,
+            images=images,
+            user_id=self.event.chat.id,
+            status_manager=status_manager,
+            msg_id=msg_id,
+            is_grouped_msg=grouped_msg,
+            chat_history=self.chat_history,
+        )
+
+        if answer.document_ids_o and answer.is_hard_retrieval_o:
+            for doc_id in answer.document_ids_o:
+                (txt, _, file_id, doc_type) = db_con.get_message_by_id(doc_id)
+
+                if file_id is None:
+                    await self.event.reply(txt)  # type: ignore
+                    continue
+
+                match doc_type:
+                    case DocType.DOCUMENT:
+                        await self.event.reply_document(file_id, caption=txt)
+                    case DocType.PHOTO:
+                        await self.event.reply_photo(file_id, caption=txt)
+                    case DocType.VOICE:
+                        await self.event.reply_voice(file_id, caption=txt)
+        else:
+            await self.event.answer(answer.response)
+
+        await status_manager.close()
 
 
 async def cron_manager(bot: Bot):
     while True:
-        logging.info("Checking for pending reminders...")
         pending_reminders = db_con.get_all_pending_reminders()
 
         for reminder_id, user_id, reminder_text, remind_at in pending_reminders:
@@ -144,16 +227,39 @@ async def cron_manager(bot: Bot):
         await asyncio.sleep(60)
 
 
+async def media_group_ack(media_queue: MediaGroupQueue, bot: Bot):
+    while True:
+        await asyncio.sleep(60)
+        unprocessed = await media_queue.get_unprocessed()
+
+        for mg_id, chat_id in unprocessed:
+            logging.info(f"Cleaning up media group id: {mg_id}")
+            await bot.send_message(
+                chat_id=chat_id,
+                text="Finished processing the photo album. You can continue sending more messages.",
+            )
+
+
 async def main() -> None:
     bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))  # type: ignore
     g_client = Client(api_key=getenv("GEMINI_KEY"))
-    user_agent = UserSupportAgent(db=db_con)
 
-    cs = await ChromaSingleton()
-    await cs.setup()
+    media_group_queue = MediaGroupQueue(items={}, work_queue={})
+    embed_store = await EmbeddingStore.create()
+
+    user_agent = UserSupportAgent(db=db_con, embed_store=embed_store)
 
     asyncio.create_task(cron_manager(bot), name="CronManager")
-    await dp.start_polling(bot, g_client=g_client, user_agent=user_agent)
+    asyncio.create_task(
+        media_group_ack(media_group_queue, bot), name="MediaGroupAcknowledger"
+    )
+
+    await dp.start_polling(
+        bot,
+        g_client=g_client,
+        user_agent=user_agent,
+        media_group_queue=media_group_queue,
+    )
 
 
 if __name__ == "__main__":

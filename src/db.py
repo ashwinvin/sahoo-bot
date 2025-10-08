@@ -1,3 +1,4 @@
+from enum import StrEnum
 import logging
 import sqlite3
 import pickle
@@ -6,6 +7,12 @@ from datetime import datetime
 
 import dspy
 from src.llm.tools import convert_image
+
+
+class DocType(StrEnum):
+    DOCUMENT = "D"
+    PHOTO = "P"
+    VOICE = "V"
 
 
 class DBConn:
@@ -18,8 +25,7 @@ class DBConn:
         # user_id is the user's telegram username
         cur.execute("""CREATE TABLE IF NOT EXISTS users (
                         user_id TEXT UNIQUE NOT NULL, 
-                        notion_id TEXT NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     );""")
 
         cur.execute("""CREATE TABLE IF NOT EXISTS messages (
@@ -28,7 +34,8 @@ class DBConn:
                     content TEXT,
                     imgs BLOB, -- pickle fmt
                     file_id TEXT,
-                    is_document BOOLEAN DEFAULT 0,
+                    doc_type TEXT,
+                    media_group_id TEXT,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
                     """)
 
@@ -67,33 +74,37 @@ class DBConn:
         content: Optional[str] = None,
         imgs: Optional[list[BinaryIO]] = None,
         file_id: Optional[str] = None,
+        doc_type: Optional[DocType] = None,
     ) -> int:
         # Sender - "llm" or "user"
         serialized_imgs = pickle.dumps([img.read() for img in imgs]) if imgs else None
-        sql = """INSERT INTO messages(sender, content, imgs, file_id) VALUES(?, ?, ?, ?) RETURNING message_id"""
+        sql = """INSERT INTO messages(sender, content, imgs, file_id, doc_type) VALUES(?, ?, ?, ?, ?) RETURNING message_id"""
         cur = self.db.cursor()
-        cur.execute(sql, (sender, content, serialized_imgs, file_id))
+        cur.execute(sql, (sender, content, serialized_imgs, file_id, doc_type))
         msg_id = cur.fetchone()
         self.db.commit()
         return msg_id[0]
 
     def get_message_by_id(
         self, message_id: int
-    ) -> tuple[Optional[str], Optional[list[dspy.Image]], Optional[str], bool]:
+    ) -> tuple[
+        Optional[str], Optional[list[dspy.Image]], Optional[str], Optional[DocType]
+    ]:
         """Fetch message content and images by message_id.
-
+            file_id and is_document are used to determine if the message is a document or not.
+            LLMS ARE NOT SUPPOSED TO USE THE FILE_ID FOR ANY REASON.
         Returns:
             (content: str | None, images: [dspy.Image] | None, file_id: str | None, is_document: bool).
         """
-        sql = """SELECT content, imgs, file_id, is_document FROM messages WHERE message_id = ?"""
+        sql = """SELECT content, imgs, file_id, doc_type FROM messages WHERE message_id = ?"""
         cur = self.db.cursor()
         cur.execute(sql, (message_id,))
         row = cur.fetchone()
 
         if not row:
             logging.warning(f"No message found with id: {message_id}")
-            return (None, None, None, False)
-        
+            return (None, None, None, None)
+
         if row[1]:
             images = [convert_image(img) for img in pickle.loads(row[1])]
             return (row[0], images, row[2], row[3])
