@@ -116,7 +116,7 @@ class UserHandler(MessageHandler):
             grouped_msg = await self.media_group_queue.add(
                 self.event.media_group_id, self.event.chat.id
             )
-            status_manager = await status_manager.set_media_grouped(
+            await status_manager.set_media_grouped(
                 self.event.media_group_id  # type: ignore
             )
 
