@@ -11,7 +11,7 @@ class QueryStatusManager:
 
     def __init__(self, msg: Message) -> None:
         self.msg: Message = msg
-        self.content = ""
+        self.content = []
         self.media_group = None
 
         if msg.chat.id not in self._instances:
@@ -26,8 +26,13 @@ class QueryStatusManager:
         return self
 
     async def update_message(self, text: str):
-        self.content += "\n" + text
-        await self.msg.edit_text(self.content)
+        self.content.append(text)
+        await self.msg.edit_text("\n".join(self.content))
+
+    async def edit_last_line(self, text: str):
+        self.content.pop()
+        self.content.append(text)
+        await self.msg.edit_text("\n".join(self.content))
 
     async def close(self):
         await self.msg.delete()

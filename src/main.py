@@ -1,3 +1,5 @@
+import os
+import pathlib
 import sys
 import typing
 import asyncio
@@ -9,10 +11,10 @@ from aiogram.types.message import Message
 from dotenv import load_dotenv
 
 from pdf2image import convert_from_bytes
-from aiogram.types import Document
+from aiogram.types import Document, BufferedInputFile, ErrorEvent
 from aiogram.handlers import MessageHandler
 from aiogram.enums import ParseMode
-from aiogram import Bot, Dispatcher
+from aiogram import F, Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 
 from google.genai import types, Client
@@ -20,7 +22,7 @@ from google.genai import types, Client
 from db import DBConn, DocType
 from llm.modules import UserSupportAgent
 from src import MediaGroupQueue, QueryStatusManager
-from src.llm.tools import EmbeddingStore
+from src.llm.tools import EmbeddingStore, McpClient
 
 
 load_dotenv(".env")
@@ -96,6 +98,7 @@ class UserHandler(MessageHandler):
                 ),
             ],
         ).text
+        query += "The above is a transcription of a voice message sent by the user."
         logging.info(f"Transcription: {query}")
         return query, file_id
 
@@ -151,6 +154,7 @@ class UserHandler(MessageHandler):
                 await self.media_group_queue.submit_task(
                     self.event.media_group_id, images[0]
                 )
+                await status_manager.close()
                 return
 
         if self.event.text:
@@ -204,10 +208,24 @@ class UserHandler(MessageHandler):
                         await self.event.reply_photo(file_id, caption=txt)
                     case DocType.VOICE:
                         await self.event.reply_voice(file_id, caption=txt)
+        elif answer.output_doc:
+            with open(
+                pathlib.Path.cwd() / "gen_docs" / answer.output_doc,
+                "rb",  # type: ignore
+            ) as file:
+                await self.event.reply_document(
+                    BufferedInputFile(file=file.read(), filename=answer.output_doc)
+                )
         else:
             await self.event.answer(answer.response)
 
         await status_manager.close()
+
+
+@dp.error(F.update.message.as_("msg"))
+async def error_handler(event: ErrorEvent, msg: Message):
+    await msg.answer(f"Uh Oh! Something broke internally \n {event.exception}")
+    logging.critical("Critical error caused by %s", event.exception, exc_info=True)
 
 
 async def cron_manager(bot: Bot):
@@ -247,7 +265,14 @@ async def main() -> None:
     media_group_queue = MediaGroupQueue(items={}, work_queue={})
     embed_store = await EmbeddingStore.create()
 
-    user_agent = UserSupportAgent(db=db_con, embed_store=embed_store)
+    wiki_tools = await McpClient.create("wikipedia-mcp", [], {})
+
+
+    user_agent = UserSupportAgent(
+        db=db_con,
+        embed_store=embed_store,
+        wiki_tools=wiki_tools.tools,
+    )
 
     asyncio.create_task(cron_manager(bot), name="CronManager")
     asyncio.create_task(

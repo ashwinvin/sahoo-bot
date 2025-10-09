@@ -1,9 +1,56 @@
 import base64
 import logging
 from os import getenv
+import dspy
+import pathlib
+
 from chromadb import AsyncHttpClient as ChromaClient
 from chromadb.api import AsyncClientAPI
-import dspy
+from typing import Optional
+from contextlib import AsyncExitStack
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from markdown_pdf import MarkdownPdf, Section
+
+
+class McpClient:
+    def __init__(self):
+        self.session: Optional[ClientSession] = None
+        self.exit_stack = AsyncExitStack()
+        self.tools = []
+
+    @classmethod
+    async def create(cls, command: str, args: list[str], env: dict[str, str]):
+        self = McpClient()
+
+        server_params = StdioServerParameters(command=command, args=args, env=env)
+
+        streamable_transport = await self.exit_stack.enter_async_context(
+            stdio_client(server_params)
+        )
+        self.read, self.write = streamable_transport  # type: ignore
+        self.session = await self.exit_stack.enter_async_context(
+            ClientSession(self.read, self.write)  # type: ignore
+        )
+        await self.session.initialize()
+
+        tools = await self.session.list_tools()
+        for tool in tools.tools:
+            self.tools.append(dspy.Tool.from_mcp_tool(self.session, tool))
+        return self
+
+
+def create_pdf(file_name: str, sections: list[str], css: str):
+    doc = MarkdownPdf(toc_level=2, optimize=True)
+    for section in sections:
+        # section = "\n".join(sections)
+        doc.add_section(Section(section, toc=False), user_css=css)
+
+    file_path = pathlib.Path.cwd() / "gen_docs" / file_name
+    file_path.touch()
+
+    doc.save(file_path)
+    return file_path
 
 
 class EmbeddingStore:

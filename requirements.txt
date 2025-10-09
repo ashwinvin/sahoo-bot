@@ -7,4 +7,4 @@ chromadb-client
 mcp
 pdf2image
 markdown-pdf
-onnxruntime
+onnxruntimemarkdown-pdf

@@ -1,3 +1,5 @@
+from os import getenv
+import pathlib
 import dspy
 import logging
 
@@ -5,11 +7,13 @@ from db import DBConn
 from typing import Optional, BinaryIO
 from llm.tools import (
     EmbeddingStore,
+    create_pdf,
 )
 from llm.signatures import (
     Analyzer,
     ClassifyQuery,
-    GenerateResponse,
+    DocumentGenerator,
+    ResponsePolisher,
     InfoAgent,
     QueryCategory,
     ScheduleAgent,
@@ -20,7 +24,13 @@ from src import QueryStatusManager
 
 
 class UserSupportAgent(dspy.Module):
-    def __init__(self, db: DBConn, embed_store: EmbeddingStore):
+    def __init__(
+        self,
+        db: DBConn,
+        embed_store: EmbeddingStore,
+        wiki_tools: list[dspy.Tool],
+        # docgen_tools: list[dspy.Tool],
+    ):
         super().__init__()
         self.db = db
         self.embed_store = embed_store
@@ -29,6 +39,8 @@ class UserSupportAgent(dspy.Module):
         self.schedule_agent = dspy.ReAct(
             ScheduleAgent, tools=[db.insert_reminder, db.get_pending_reminders]
         )  # noqa: F82
+        self.document_generator = dspy.ChainOfThought(DocumentGenerator)
+
         self.analyzer = dspy.Predict(Analyzer)
         self.info_agent = dspy.ReAct(
             InfoAgent,
@@ -37,9 +49,10 @@ class UserSupportAgent(dspy.Module):
                 embed_store.retrieve_relevant_messages,
                 db.get_pending_reminders,
                 db.get_message_by_id,
+                *wiki_tools,
             ],
         )
-        self.answer_rephraser = dspy.Predict(GenerateResponse)
+        self.answer_rephraser = dspy.Predict(ResponsePolisher)
 
     async def aforward(
         self,
@@ -70,12 +83,13 @@ class UserSupportAgent(dspy.Module):
         )
         is_hard_retrieval = False
         doc_ids = []
+
         match classification.category:
-            case QueryCategory.INFORMATION:
+            case QueryCategory.INFORMATION | QueryCategory.ASSIGNMENT_GENERATION:
                 info_history = chat_history.get(user_id, {"info": []})["info"]
 
                 await status_manager.update_message(
-                    "Analyzing and retrieving relevent information..."
+                    "🔍 Analyzing and retrieving relevent information..."
                 )
 
                 info = await self.info_agent.acall(
@@ -84,7 +98,7 @@ class UserSupportAgent(dspy.Module):
                     user_id=user_id,
                     history=dspy.History(messages=info_history),
                 )
-
+                await status_manager.edit_last_line("✅ Analyzing and retrieving relevent information...")
                 info_history.append(
                     {
                         "context_txt": query,
@@ -99,7 +113,12 @@ class UserSupportAgent(dspy.Module):
 
                 proposed_ans = info.response
 
-                if info.is_data_dump:
+                if (
+                    info.is_data_dump
+                    and classification.category
+                    is not QueryCategory.ASSIGNMENT_GENERATION
+                ):
+                    await status_manager.update_message("⚪ Updating Information database")
                     info_id = self.db.insert_info(proposed_ans, msg_id, str(user_id))
                     await self.embed_store.insert_info_embedding(
                         summary=proposed_ans,
@@ -108,8 +127,9 @@ class UserSupportAgent(dspy.Module):
                         msg_id=msg_id,
                         has_img=True if imgs else False,
                     )
+
                     await status_manager.update_message(
-                        f"I've extracted the following data and updated my database. \n {proposed_ans}"
+                        "✅ Information database updated"
                     )
 
                     if event_prompt := info.set_event_reminder:
@@ -122,22 +142,33 @@ class UserSupportAgent(dspy.Module):
 
                 if info.source_documents:
                     await status_manager.update_message(
-                        f"Information sourced from message ids: {info.source_documents}"
+                        f"🔶 Information sourced from message ids: {info.source_documents}"
                     )
-                    # sources = "\n".join(
-                    #     [
-                    #         f"- {self.db.get_message_by_id(msg_id)}"
-                    #         for msg_id in info.source_documents
-                    #     ]
-                    # )
-                    # proposed_ans += f"\n\nThe information I used is sourced from the following messages:\n{sources}"
                     doc_ids = info.source_documents
 
                 if info.is_hard_retrieval:
                     await status_manager.update_message(
-                        f"Document found from message ids: {info.source_documents}"
+                        f"🔶 Document found from message ids: {info.source_documents}"
                     )
                     is_hard_retrieval = True
+
+                if classification.category is QueryCategory.ASSIGNMENT_GENERATION:
+                    await status_manager.update_message(
+                        "⚪ Generating the requested document."
+                    )
+
+                    docgen_pred = await self.document_generator.acall(
+                        user_query=query,
+                        context=proposed_ans,
+                    )
+
+                    o_path = create_pdf(
+                        docgen_pred.file_name,
+                        docgen_pred.sections,
+                        docgen_pred.custom_css,
+                    )
+                    logging.info(f"The document has been saved to {o_path}")
+                    proposed_ans = f"The document has been generated with file name: {docgen_pred.file_name}"
 
             case QueryCategory.SCHEDULE:
                 scheduled_pred = await self.schedule_agent.acall(
@@ -165,4 +196,5 @@ class UserSupportAgent(dspy.Module):
         await self.embed_store.insert_message_embedding(
             content=query, user_id=user_id, is_llm=True, msg_id=msg_id
         )
+        logging.info(final_ans)
         return final_ans
