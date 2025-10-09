@@ -116,7 +116,7 @@ class UserHandler(MessageHandler):
             grouped_msg = await self.media_group_queue.add(
                 self.event.media_group_id, self.event.chat.id
             )
-            status_manager = await status_manager.set_media_grouped(
+            await status_manager.set_media_grouped(
                 self.event.media_group_id  # type: ignore
             )
 
@@ -146,7 +146,7 @@ class UserHandler(MessageHandler):
                             f"MG ID: {self.event.media_group_id} recieved {len(images)} photos"
                         )
                         await status_manager.update_message(
-                            f"Downloaded {len(images)} from the album"
+                            "Downloaded all images from the album"
                         )
                         break
 

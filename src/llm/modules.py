@@ -128,7 +128,7 @@ class UserSupportAgent(dspy.Module):
                         has_img=True if imgs else False,
                     )
 
-                    await status_manager.update_message(
+                    await status_manager.edit_last_line(
                         "✅ Information database updated"
                     )
 

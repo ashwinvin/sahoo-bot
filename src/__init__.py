@@ -22,7 +22,7 @@ class QueryStatusManager:
             if instance.media_group == media_group_id:
                 return instance
         self.media_group = media_group_id
-        return self
+        # return self
 
     async def update_message(self, text: str):
         self.content.append(text)
