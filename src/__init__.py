@@ -20,7 +20,6 @@ class QueryStatusManager:
     async def set_media_grouped(self, media_group_id: str):
         for instance in self._instances[self.msg.chat.id]:
             if instance.media_group == media_group_id:
-                await self.close()
                 return instance
         self.media_group = media_group_id
         return self
@@ -48,6 +47,8 @@ class MediaGroupQueue:
     lock: asyncio.Lock = asyncio.Lock()
 
     async def add(self, media_group_id: str, chat_id: int):
+        if not media_group_id:
+            return False
         async with self.lock:
             if data := self.items.get(media_group_id):
                 self.items[media_group_id] = (
