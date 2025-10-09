@@ -125,7 +125,7 @@ class UserHandler(MessageHandler):
             images = [await self.bot.download(images[-1])]
 
             if (
-                not grouped_msg
+                not grouped_msg and self.event.media_group_id is not None
             ):  # Wait for any other images which might be send together
                 await status_manager.update_message(
                     "Waiting for any other image that might be in the album."
