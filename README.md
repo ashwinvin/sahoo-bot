@@ -1,61 +1,44 @@
-# Telegram Bot Project
+# Sahoo Bot
 
-This project is a Telegram bot that processes both voice and text messages from users. It utilizes an SQLite database to store user information and message logs. The bot is built using the `aiogram` framework for asynchronous handling of messages.
+Sahoo Bot is a Telegram bot that leverages LLMs to process, store, and retrieve user data, including text, images, documents, and voice messages. It uses an SQLite database for persistent storage and integrates with FastAPI to serve stored documents via HTTP links.
 
-## Project Structure
+## Features
 
-```
-telegram-bot-project
-├── src
-│   ├── bot.py               # Entry point of the Telegram bot
-│   ├── handlers
-│   │   ├── text_handler.py   # Handles incoming text messages
-│   │   └── voice_handler.py  # Handles incoming voice messages
-│   ├── db
-│   │   ├── database.py       # Manages SQLite database connection
-│   │   └── models.py         # Defines database models
-│   └── config.py             # Configuration settings for the bot
-├── requirements.txt          # Project dependencies
-├── README.md                 # Project documentation
-└── .env                      # Environment variables
-```
+- **Telegram Bot**: Handles user messages, documents, images, and voice notes using [aiogram](https://github.com/aiogram/aiogram).
+- **LLM Integration**: Uses Gemini and DSPy for advanced query understanding, information extraction, and document generation.
+- **Document Storage & Retrieval**: Stores user-uploaded documents and allows retrieval via message IDs.
+- **Reminders & Scheduling**: Users can set reminders and schedules, which are managed and triggered by the bot.
+- **FastAPI Server**: Serves stored documents from the SQLite database via HTTP endpoints.
+- **Chroma Embedding Store**: Stores and retrieves message embeddings for semantic search.
+
 
 ## Setup Instructions
 
-1. **Clone the repository:**
-   ```
-   git clone <repository-url>
-   cd telegram-bot-project
-   ```
-
-2. **Create a virtual environment:**
-   ```
-   python -m venv venv
-   source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+   ```sh
+   git clone <repository-url> # Clone the directory
+   cd sahoo-bot
+   python -m venv venv # Setup virtual env
+   source venv/bin/activate 
+   pip install -r requirements.txt # install dependencies
    ```
 
-3. **Install dependencies:**
-   ```
-   pip install -r requirements.txt
+   The API Tokens and other parameters must be set in `.env`, `.env_template` contains the variables to be set. 
+
+   ```sh
+   python src/db.py # Initialize the database
    ```
 
-4. **Configure the bot:**
-   - Create a `.env` file in the root directory and add your bot token and database URL:
-     ```
-     BOT_TOKEN=your_bot_token
-     DATABASE_URL=sqlite:///your_database.db
-     ```
-
-5. **Run the bot:**
-   ```
-   python src/bot.py
+   ```sh
+   python src/main.py # Start the bot
    ```
 
 ## Usage
+Interact with the bot to:
 
-- Send text messages to the bot to receive responses processed by the `TextHandler`.
-- Send voice messages to the bot to receive responses processed by the `VoiceHandler`.
+*   **Process & Store Content:** Send messages, images, documents, and voice notes for summarization or secure storage.
+*   **Access Stored Data:** Easily retrieve past uploads for clarification, report generation, or to access original files.
+*   **Manage Reminders:** Set and receive timely reminders for your important events and tasks.
 
-## Contributing
+## License
 
-Feel free to submit issues or pull requests for improvements or bug fixes.
+MIT License
